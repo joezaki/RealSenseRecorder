@@ -164,9 +164,7 @@ class RealSenseCamera(QThread):
             if not os.path.exists(self.folder_path):
                 os.makedirs(self.folder_path)
 
-            # set up ttl
-            # if self.depth_sensor.supports(rs.option.inter_cam_sync_mode):
-            #     self.depth_sensor.set_option(rs.option.inter_cam_sync_mode, 1)
+            # turn on ttl
             if self.depth_sensor.supports(rs.option.output_trigger_enabled):
                 self.depth_sensor.set_option(rs.option.output_trigger_enabled, 1)
 
@@ -180,8 +178,6 @@ class RealSenseCamera(QThread):
         self.recording = False
 
         # turn off TTL
-        # if self.depth_sensor.supports(rs.option.inter_cam_sync_mode):
-        #     self.depth_sensor.set_option(rs.option.inter_cam_sync_mode, 0)
         if self.depth_sensor.supports(rs.option.output_trigger_enabled):
             self.depth_sensor.set_option(rs.option.output_trigger_enabled, 0)
 
