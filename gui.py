@@ -28,6 +28,7 @@ class RealSenseCamera(QThread):
     
     def __init__(
             self,
+            serial_number=None,
             folder_path='.',
             frames_per_file=1000,
             width=640,
@@ -36,11 +37,38 @@ class RealSenseCamera(QThread):
             codec='XVID',
             exposure=5000,
             gain=50,
-            laser_power=150
+            laser_power=150,
+            enable_ttl=True
             ):
         '''
         Initialize RealSense camera, define recording
         parameters, and enable infrared stream.
+
+        Parameters
+        ==========
+        serial_number : str
+            Serial number of the desired camera to enable. If None,
+            default camera will be enabled. Default is None.
+        folder_path : str
+            Directory where the files will be stored. A folder with
+            the date and time will be created there. Default is '.'.
+        frames_per_file : int
+            Number of frames that each avi file will store. Default is 1000.
+        width, height : int
+            Width and height of the FOV of the camera. Defaults are 640 and
+            480, respectively.
+        fps : int
+            Desired frame rate of the camera. Default is 30.
+        codec : str
+            Which codec to use to save avi files. Default is 'XVID'.
+        exposure : int
+            Exposure of the camera stream. Default is 5000.
+        gain : int
+            Digital gain of the camera stream. Default is 50.
+        laser_power : int
+            Power of the infrared laser in the camera. Default is 150.
+        enable_ttl : bool
+            Whether or not to use output trigger on every frame. Default is True.
         '''
         super().__init__()
         self.recording = False
@@ -52,6 +80,7 @@ class RealSenseCamera(QThread):
         self.frame_counter = 0
         self.total_frames = 0
         self.recording_start_time = None
+        self.serial_number = serial_number
         self.folder_path = folder_path
         self.frames_per_file = frames_per_file
         self.width = width
@@ -61,10 +90,13 @@ class RealSenseCamera(QThread):
         self.exposure = exposure
         self.gain = gain
         self.laser_power = laser_power
+        self.enable_ttl = enable_ttl
         
         # set up realsense stream
         self.pipeline = rs.pipeline()
         self.config = rs.config()
+        if self.serial_number is not None:
+            self.config.enable_device(serial_number)
         self.config.enable_stream(
             rs.stream.infrared,
             1,
@@ -165,8 +197,9 @@ class RealSenseCamera(QThread):
                 os.makedirs(self.folder_path)
 
             # turn on ttl
-            if self.depth_sensor.supports(rs.option.output_trigger_enabled):
-                self.depth_sensor.set_option(rs.option.output_trigger_enabled, 1)
+            if self.enable_ttl:
+                if self.depth_sensor.supports(rs.option.output_trigger_enabled):
+                    self.depth_sensor.set_option(rs.option.output_trigger_enabled, 1)
 
             self.recording = True
 
@@ -178,8 +211,9 @@ class RealSenseCamera(QThread):
         self.recording = False
 
         # turn off TTL
-        if self.depth_sensor.supports(rs.option.output_trigger_enabled):
-            self.depth_sensor.set_option(rs.option.output_trigger_enabled, 0)
+        if self.enable_ttl:
+            if self.depth_sensor.supports(rs.option.output_trigger_enabled):
+                self.depth_sensor.set_option(rs.option.output_trigger_enabled, 0)
 
         if self.writer:
             self.writer.release()
@@ -200,6 +234,7 @@ class RealSenseCamera(QThread):
 class RealSenseGUI(QMainWindow):
     def __init__(
             self,
+            serial_number=None,
             folder_path='.',
             frames_per_file=1000,
             width=640,
@@ -208,7 +243,8 @@ class RealSenseGUI(QMainWindow):
             codec='XVID',
             exposure=5000,
             gain=50,
-            laser_power=150
+            laser_power=150,
+            enable_ttl=True
             ):
         '''
         Initialize GUI elements, with spaces for the video
@@ -221,6 +257,7 @@ class RealSenseGUI(QMainWindow):
         self.setFixedSize(700, 600)
 
         # set variables
+        self.serial_number = serial_number
         self.folder_path = folder_path
         self.frames_per_file = frames_per_file
         self.width = width
@@ -230,6 +267,7 @@ class RealSenseGUI(QMainWindow):
         self.exposure = exposure
         self.gain = gain
         self.laser_power = laser_power
+        self.enable_ttl = enable_ttl
 
         # ---------------------------------------------
         # UI layout initialization
@@ -288,6 +326,7 @@ class RealSenseGUI(QMainWindow):
 
         # start camera thread
         self.camera = RealSenseCamera(
+            serial_number=self.serial_number,
             folder_path=self.folder_path,
             frames_per_file=self.frames_per_file,
             width=self.width,
@@ -296,7 +335,8 @@ class RealSenseGUI(QMainWindow):
             codec=self.codec,
             exposure=self.exposure,
             gain=self.gain,
-            laser_power=self.laser_power
+            laser_power=self.laser_power,
+            enable_ttl=self.enable_ttl
             )
         self.camera.image_data.connect(self.update_image)
         self.camera.stats_data.connect(self.update_stats)
