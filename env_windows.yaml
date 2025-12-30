@@ -1,0 +1,13 @@
+name: realsense
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.13
+  - jupyter
+  - numpy
+  - opencv
+  - pyside6>=6.8
+  - libusb
+  - pip:
+    - pyrealsense2>=2.56.5
