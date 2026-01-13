@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QLabel,
-    QHBoxLayout
+    QHBoxLayout,
+    QMessageBox
     )
 from PySide6.QtGui import QImage, QPixmap, QFont
 
@@ -419,6 +420,11 @@ class RealSenseGUI(QMainWindow):
             )
         self.blink_state = False
 
+        # display a message indicating recording has ended
+        msg = QMessageBox(self)
+        msg.setText(f"Recording Ended. Data recorded at<br>{os.path.abspath(self.camera.folder_path)}.")
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec()
 
     @Slot(float)
     def check_recording_length(self, elapsed):
