@@ -404,11 +404,11 @@ class RealSenseGUI(QMainWindow):
         self.blink_state = True
 
         self.camera.start_recording()
-
-    def on_stop_clicked(self):
+    
+    def end_recording(self):
         '''
-        Disable stop recording button when clicked, stop
-        timer, stop blinking light, and stop recording.
+        Disable stop recording button, stop timer,
+        stop blinking light, and stop recording.
         '''
         self.camera.stop_recording()
 
@@ -423,9 +423,15 @@ class RealSenseGUI(QMainWindow):
 
         # display a message indicating recording has ended
         msg = QMessageBox(self)
-        msg.setText(f"Recording Ended. Data recorded at<br>{os.path.abspath(self.camera.folder_path)}.")
+        msg.setText(f"Recording Ended. Data recorded at<br>{os.path.abspath(self.camera.recording_path)}.")
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec()
+
+    def on_stop_clicked(self):
+        '''
+        End recording when clicked.
+        '''
+        self.end_recording()
 
     @Slot(float)
     def check_recording_length(self, elapsed):
@@ -433,7 +439,7 @@ class RealSenseGUI(QMainWindow):
         When recording length has completed (if provided), end recording.
         '''
         if elapsed >= self.recording_length:
-            self.on_stop_clicked()
+            self.end_recording()
 
     def closeEvent(self, event):
         '''
