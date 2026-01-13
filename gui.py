@@ -84,6 +84,7 @@ class RealSenseCamera(QThread):
         self.recording_start_time = None
         self.serial_number = serial_number
         self.folder_path = folder_path
+        self.recording_path = None
         self.frames_per_file = frames_per_file
         self.width = width
         self.height = height
@@ -170,7 +171,7 @@ class RealSenseCamera(QThread):
             self.frame_counter = 0
         
         # create new compressed AVI file
-        filename = os.path.join(self.folder_path, f"{self.file_counter}.avi")
+        filename = os.path.join(self.recording_path, f"{self.file_counter}.avi")
         fourcc = cv2.VideoWriter_fourcc(*self.codec)
         self.writer = cv2.VideoWriter(
             filename,
@@ -195,9 +196,9 @@ class RealSenseCamera(QThread):
 
             # define folder and create if doesn't exist
             current_time = str(datetime.now().strftime("%Y_%m_%d-%H_%M_%S"))
-            self.folder_path = os.path.join(self.folder_path, current_time)
-            if not os.path.exists(self.folder_path):
-                os.makedirs(self.folder_path)
+            self.recording_path = os.path.join(self.folder_path, current_time)
+            if not os.path.exists(self.recording_path):
+                os.makedirs(self.recording_path)
 
             # turn on ttl
             if self.enable_ttl:
