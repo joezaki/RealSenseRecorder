@@ -5,6 +5,7 @@ from gui import RealSenseGUI
 recording_params = {
     'serial_number'   : '213622072819',
     'folder_path'     : './data',
+    'recording_length': 10, # in seconds, leave 0 if you want recording indefinitely
     'frames_per_file' : 1000,
     'width'       : 640,
     'height'      : 480,

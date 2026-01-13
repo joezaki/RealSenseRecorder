@@ -25,6 +25,7 @@ class RealSenseCamera(QThread):
     # signal to send the frame and stats back to the GUI for display
     image_data = Signal(np.ndarray)
     stats_data = Signal(int, str)
+    elapsed_time = Signal(float)
     
     def __init__(
             self,
@@ -138,6 +139,7 @@ class RealSenseCamera(QThread):
                     elapsed = time.time() - self.recording_start_time
                     time_str = str(timedelta(seconds=int(elapsed)))
                     self.stats_data.emit(self.total_frames, time_str)
+                    self.elapsed_time.emit(elapsed)
                 else:
                     self.stats_data.emit(0, "00:00:00")
 
@@ -234,6 +236,7 @@ class RealSenseCamera(QThread):
 class RealSenseGUI(QMainWindow):
     def __init__(
             self,
+            recording_length=None,
             serial_number=None,
             folder_path='.',
             frames_per_file=1000,
@@ -251,6 +254,13 @@ class RealSenseGUI(QMainWindow):
         feed, time elapsed, a recording indicator light, and
         buttons to begin and end recording. Also initialize
         camera object.
+
+        Parameters
+        ==========
+        recording_length : int
+            Time in seconds to make the recording. If 0 or None, will be converted to np.inf and
+            the recording will run until the recording is manually stopped. Default is None.
+        ### The rest of the parameters are kwargs fed to the RealSenseCamera class ###
         '''
         super().__init__()
         self.setWindowTitle("RealSense IR Recorder")
@@ -259,6 +269,7 @@ class RealSenseGUI(QMainWindow):
         # set variables
         self.serial_number = serial_number
         self.folder_path = folder_path
+        self.recording_length = np.inf if (recording_length==0)|(recording_length is None) else recording_length
         self.frames_per_file = frames_per_file
         self.width = width
         self.height = height
@@ -340,6 +351,7 @@ class RealSenseGUI(QMainWindow):
             )
         self.camera.image_data.connect(self.update_image)
         self.camera.stats_data.connect(self.update_stats)
+        self.camera.elapsed_time.connect(self.check_recording_length)
         self.camera.start()
 
     @Slot(np.ndarray)
@@ -396,6 +408,8 @@ class RealSenseGUI(QMainWindow):
         Disable stop recording button when clicked, stop
         timer, stop blinking light, and stop recording.
         '''
+        self.camera.stop_recording()
+
         self.record_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
 
@@ -405,7 +419,14 @@ class RealSenseGUI(QMainWindow):
             )
         self.blink_state = False
 
-        self.camera.stop_recording()
+
+    @Slot(float)
+    def check_recording_length(self, elapsed):
+        '''
+        When recording length has completed (if provided), end recording.
+        '''
+        if elapsed >= self.recording_length:
+            self.on_stop_clicked()
 
     def closeEvent(self, event):
         '''
