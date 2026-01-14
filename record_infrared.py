@@ -3,8 +3,8 @@ from PySide6.QtWidgets import QApplication
 from gui import RealSenseGUI
 
 recording_params = {
-    'serial_number'   : '213622072819',
-    'folder_path'     : './data',
+    'serial_number'   : '213622072819', # leave as None to load the first available one
+    'folder_path'     : './data/',
     'recording_length': 10, # in seconds, leave 0 if you want recording indefinitely
     'frames_per_file' : 1000,
     'width'       : 640,
