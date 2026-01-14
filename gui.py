@@ -269,9 +269,9 @@ class RealSenseGUI(QMainWindow):
         self.setFixedSize(700, 600)
 
         # set variables
+        self.recording_length = np.inf if (recording_length<=0)|(recording_length is None) else recording_length
         self.serial_number = serial_number
         self.folder_path = folder_path
-        self.recording_length = np.inf if (recording_length==0)|(recording_length is None) else recording_length
         self.frames_per_file = frames_per_file
         self.width = width
         self.height = height
