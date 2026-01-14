@@ -1,5 +1,5 @@
-import sys
 import os
+import json
 import cv2
 import time
 from datetime import datetime, timedelta
@@ -30,6 +30,7 @@ class RealSenseCamera(QThread):
     
     def __init__(
             self,
+            recording_length=None,
             serial_number=None,
             folder_path='.',
             frames_per_file=1000,
@@ -48,6 +49,9 @@ class RealSenseCamera(QThread):
 
         Parameters
         ==========
+        recording_length : int
+            Time in seconds to make the recording. If 0 or negative or None, will be converted to np.inf and
+            the recording will run until the recording is manually stopped. Default is None.
         serial_number : str
             Serial number of the desired camera to enable. If None,
             default camera will be enabled. Default is None.
@@ -82,6 +86,7 @@ class RealSenseCamera(QThread):
         self.frame_counter = 0
         self.total_frames = 0
         self.recording_start_time = None
+        self.recording_length = recording_length
         self.serial_number = serial_number
         self.folder_path = folder_path
         self.recording_path = None
@@ -199,6 +204,14 @@ class RealSenseCamera(QThread):
             self.recording_path = os.path.join(self.folder_path, current_time)
             if not os.path.exists(self.recording_path):
                 os.makedirs(self.recording_path)
+            
+            # save log file of the recording's attributes
+            log_keys = ['recording_start_time', 'recording_length', 'serial_number', 'folder_path', 'recording_path',
+                        'frames_per_file', 'width', 'height', 'fps', 'codec', 'exposure', 'gain', 'laser_power', 'enable_ttl']
+            log_info = {key: getattr(self, key) for key in log_keys}
+            with open(os.path.join(self.recording_path, 'log.json'), 'w') as f:
+                json.dump(log_info, f, indent=4)
+            del log_info
 
             # turn on ttl
             if self.enable_ttl:
@@ -260,9 +273,9 @@ class RealSenseGUI(QMainWindow):
         Parameters
         ==========
         recording_length : int
-            Time in seconds to make the recording. If 0 or None, will be converted to np.inf and
+            Time in seconds to make the recording. If 0 or negative or None, will be converted to np.inf and
             the recording will run until the recording is manually stopped. Default is None.
-        ### The rest of the parameters are kwargs fed to the RealSenseCamera class ###
+        ### See the RealSenseCamera class for the rest of the parameters; they are mostly fed directly there ###
         '''
         super().__init__()
         self.setWindowTitle("RealSense IR Recorder")
@@ -339,6 +352,7 @@ class RealSenseGUI(QMainWindow):
 
         # start camera thread
         self.camera = RealSenseCamera(
+            recording_length=self.recording_length,
             serial_number=self.serial_number,
             folder_path=self.folder_path,
             frames_per_file=self.frames_per_file,
