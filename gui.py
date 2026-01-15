@@ -1,9 +1,11 @@
 import os
 import json
+import csv
 import cv2
 import time
 from datetime import datetime, timedelta
 import numpy as np
+import pandas as pd
 import pyrealsense2 as rs
 
 from PySide6.QtCore import QThread, Signal, Qt, Slot, QTimer
@@ -143,10 +145,18 @@ class RealSenseCamera(QThread):
                 if self.recording:
                     self.write_frame(frame_np)
 
+                    # emit time data
                     elapsed = time.time() - self.recording_start_time
                     time_str = str(timedelta(seconds=int(elapsed)))
                     self.stats_data.emit(self.total_frames, time_str)
                     self.elapsed_time.emit(elapsed)
+
+                    # save timestamp
+                    timestamp = ir_frame.get_timestamp()
+                    with open(self.timestamps_path, 'a', newline='') as csv_file:
+                        writer = csv.writer(csv_file)
+                        writer.writerow([self.total_frames-1, timestamp])
+
                 else:
                     self.stats_data.emit(0, "00:00:00")
 
@@ -213,6 +223,12 @@ class RealSenseCamera(QThread):
                 json.dump(log_info, f, indent=4)
             del log_info
 
+            # create timestamps csv file
+            self.timestamps_path = os.path.join(self.recording_path, 'timestamps.csv')
+            with open(self.timestamps_path, 'a', newline='') as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(['Frame', 'Timestamp'])
+
             # turn on ttl
             if self.enable_ttl:
                 if self.depth_sensor.supports(rs.option.output_trigger_enabled):
@@ -236,6 +252,11 @@ class RealSenseCamera(QThread):
             self.writer.release()
             self.writer = None
             print('Recording stopped.')
+        
+        # re-scale timestamps
+        timestamps = pd.read_csv(self.timestamps_path)
+        timestamps['TimestampFromStart'] = timestamps['Timestamp'] - timestamps['Timestamp'][0]
+        timestamps.to_csv(self.timestamps_path, index=False)
 
     def stop_camera(self):
         '''

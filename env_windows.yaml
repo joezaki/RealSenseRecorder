@@ -6,6 +6,7 @@ dependencies:
   - python>=3.13
   - jupyter
   - numpy
+  - pandas
   - opencv
   - pyside6>=6.8
   - libusb
