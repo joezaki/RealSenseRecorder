@@ -273,17 +273,7 @@ class RealSenseGUI(QMainWindow):
     def __init__(
             self,
             recording_length=None,
-            serial_number=None,
-            folder_path='.',
-            frames_per_file=1000,
-            width=640,
-            height=480,
-            fps=30,
-            codec='XVID',
-            exposure=5000,
-            gain=50,
-            laser_power=150,
-            enable_ttl=True
+            **camera_kwargs
             ):
         '''
         Initialize GUI elements, with spaces for the video
@@ -304,17 +294,6 @@ class RealSenseGUI(QMainWindow):
 
         # set variables
         self.recording_length = np.inf if (recording_length<=0)|(recording_length is None) else recording_length
-        self.serial_number = serial_number
-        self.folder_path = folder_path
-        self.frames_per_file = frames_per_file
-        self.width = width
-        self.height = height
-        self.fps = fps
-        self.codec = codec
-        self.exposure = exposure
-        self.gain = gain
-        self.laser_power = laser_power
-        self.enable_ttl = enable_ttl
 
         # ---------------------------------------------
         # UI layout initialization
@@ -337,7 +316,6 @@ class RealSenseGUI(QMainWindow):
         # display video label
         self.video_label = QLabel("Camera Feed")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(self.width, self.height)
         self.video_label.setStyleSheet(
             "background-color: black; border: 2px solid gray;"
             )
@@ -374,17 +352,7 @@ class RealSenseGUI(QMainWindow):
         # start camera thread
         self.camera = RealSenseCamera(
             recording_length=self.recording_length,
-            serial_number=self.serial_number,
-            folder_path=self.folder_path,
-            frames_per_file=self.frames_per_file,
-            width=self.width,
-            height=self.height,
-            fps=self.fps,
-            codec=self.codec,
-            exposure=self.exposure,
-            gain=self.gain,
-            laser_power=self.laser_power,
-            enable_ttl=self.enable_ttl
+            **camera_kwargs
             )
         self.camera.image_data.connect(self.update_image)
         self.camera.stats_data.connect(self.update_stats)
