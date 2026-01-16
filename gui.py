@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
+from scipy import ndimage
 import pyrealsense2 as rs
 
 from PySide6.QtCore import QThread, Signal, Qt, Slot, QTimer
@@ -29,9 +30,13 @@ class RealSenseCamera(QThread):
     image_data = Signal(np.ndarray)
     stats_data = Signal(int, str)
     elapsed_time = Signal(float)
+    reference_ready = Signal(bool)
+    tracking_data = Signal(np.ndarray, tuple)
     
     def __init__(
             self,
+            use_tracking=False,
+            ref_num_frames=30,
             recording_length=None,
             serial_number=None,
             folder_path='.',
@@ -43,7 +48,13 @@ class RealSenseCamera(QThread):
             exposure=5000,
             gain=50,
             laser_power=150,
-            enable_ttl=True
+            enable_ttl=True,
+            tracking_method='dark',
+            use_window=True,
+            window_size=50,
+            window_weight=0.90,
+            loc_thresh=99.5,
+            ksize=5,
             ):
         '''
         Initialize RealSense camera, define recording
@@ -51,6 +62,8 @@ class RealSenseCamera(QThread):
 
         Parameters
         ==========
+        use_tracking : bool
+            Whether or not to use real-time tracking. Default is False.
         recording_length : int
             Time in seconds to make the recording. If 0 or negative or None, will be converted to np.inf and
             the recording will run until the recording is manually stopped. Default is None.
@@ -82,12 +95,16 @@ class RealSenseCamera(QThread):
         self.recording = False
         self.running = True
         
-        # initialize variables
+        # initialize state variables
         self.writer = None
         self.file_counter = 0
         self.frame_counter = 0
         self.total_frames = 0
         self.recording_start_time = None
+
+        # assign provided args as attrs
+        self.use_tracking = use_tracking
+        self.ref_num_frames = ref_num_frames
         self.recording_length = recording_length
         self.serial_number = serial_number
         self.folder_path = folder_path
@@ -101,6 +118,22 @@ class RealSenseCamera(QThread):
         self.gain = gain
         self.laser_power = laser_power
         self.enable_ttl = enable_ttl
+
+        # assign tracking attributes
+        self.tracking_method = tracking_method
+        self.use_window = use_window
+        self.window_size = window_size
+        self.window_weight = window_weight
+        self.loc_thresh = loc_thresh
+        self.ksize = ksize
+
+        # initialize tracking attributes
+        self.computing_reference = False
+        self.ref_stack = []
+        self.reference = None
+        self.prior_position = None
+        self.timestamps_csv_path = None
+        self.tracking_csv_path = None
         
         # set up realsense stream
         self.pipeline = rs.pipeline()
@@ -115,6 +148,62 @@ class RealSenseCamera(QThread):
             rs.format.y8,
             fps
             )
+
+    def compute_reference(self):
+        '''
+        Generate the reference image for subsequent video tracking
+        '''
+        self.ref_stack = []
+        self.computing_reference = True
+    
+    def locate_subject(self, frame):
+        '''
+        Locate the subject in the frame.
+        
+        Note: This part of the code is adapted directly from:
+        https://github.com/denisecailab/ezTrack/LocationTracking
+        '''
+        frame = frame.astype('int16')
+        reference = self.reference.astype('int16')
+        
+        # find difference from reference
+        if self.tracking_method == 'abs':
+            diff = np.abs(frame - reference)
+        elif self.tracking_method == 'light':
+            diff = frame - reference
+        elif self.tracking_method == 'dark':
+            diff = reference - frame
+        else:
+            raise Exception("Invalid 'tracking_method. Must be one of ['abs', 'light', 'dark']")
+    
+        # apply window
+        if self.prior_position is not None and self.use_window:
+            weight = 1 - self.window_weight
+            window_size = self.window_size//2
+            ymin,ymax = self.prior_position[0]-window_size, self.prior_position[0]+window_size
+            xmin,xmax = self.prior_position[1]-window_size, self.prior_position[1]+window_size
+
+            diff = diff + (diff.min() * -1) #scale so lowest value is 0
+            diff_weights = np.ones(diff.shape)*weight
+            diff_weights[slice(int(max(ymin, 0)), int(ymax)),
+                         slice(int(max(xmin, 0)), int(xmax))]=1
+            diff = diff*diff_weights
+        
+        # threshold differences and find center of mass for remaining values
+        diff[diff<np.percentile(diff,self.loc_thresh)]=0
+        
+        # remove influence of wire
+        if self.ksize is not None:
+            kernel = np.ones((self.ksize,self.ksize),np.uint8)
+            diff_morph = cv2.morphologyEx(diff, cv2.MORPH_OPEN, kernel)
+            krn_violation = diff_morph.sum()==0
+            diff = diff if krn_violation else diff_morph
+            if krn_violation:
+                print(f"WARNING: ksize too large. Not applying for frame {self.total_frames}")
+        
+        com = ndimage.center_of_mass(diff) # returns as (y,x)
+
+        return diff, com
 
     def run(self):
         '''
@@ -135,12 +224,35 @@ class RealSenseCamera(QThread):
 
         try:
             while self.running:
-                frames = self.pipeline.wait_for_frames()
+                try:
+                    frames = self.pipeline.wait_for_frames()
+                except RuntimeError:
+                    print("Frame timeout. Retrying...")
+                    continue
+                
                 ir_frame = frames.get_infrared_frame()
                 if not ir_frame:
                     continue
                 frame_np = np.asanyarray(ir_frame.get_data())
+
+                if self.computing_reference:
+                    self.ref_stack.append(frame_np.copy())
+                    if len(self.ref_stack) >= self.ref_num_frames:
+                        self.reference = np.median(np.array(self.ref_stack), axis=0).astype(np.uint8)
+                        self.computing_reference = False
+                        self.reference_ready.emit(True)
+                        print("Reference computed successfully.")
+
                 self.image_data.emit(frame_np) # display frame
+
+                if self.use_tracking and self.reference is not None:
+                    diff, com = self.locate_subject(frame_np)
+                    self.prior_position = com
+                    self.tracking_data.emit(diff, com)
+                    if self.recording:
+                        with open(self.tracking_csv_path, 'a', newline='') as csv_file:
+                            writer = csv.writer(csv_file)
+                            writer.writerow([self.total_frames, com[1], com[0]])
 
                 if self.recording:
                     self.write_frame(frame_np)
@@ -153,9 +265,9 @@ class RealSenseCamera(QThread):
 
                     # save timestamp
                     timestamp = ir_frame.get_timestamp()
-                    with open(self.timestamps_path, 'a', newline='') as csv_file:
+                    with open(self.timestamps_csv_path, 'a', newline='') as csv_file:
                         writer = csv.writer(csv_file)
-                        writer.writerow([self.total_frames-1, timestamp])
+                        writer.writerow([self.total_frames-1, timestamp]) # frame was already bumped in write_frame()
 
                 else:
                     self.stats_data.emit(0, "00:00:00")
@@ -215,19 +327,25 @@ class RealSenseCamera(QThread):
             if not os.path.exists(self.recording_path):
                 os.makedirs(self.recording_path)
             
-            # save log file of the recording's attributes
-            log_keys = ['recording_start_time', 'recording_length', 'serial_number', 'folder_path', 'recording_path',
+            # save params file of the recording's attributes
+            params_keys = ['recording_start_time', 'recording_length', 'serial_number', 'folder_path', 'recording_path',
                         'frames_per_file', 'width', 'height', 'fps', 'codec', 'exposure', 'gain', 'laser_power', 'enable_ttl']
-            log_info = {key: getattr(self, key) for key in log_keys}
-            with open(os.path.join(self.recording_path, 'log.json'), 'w') as f:
-                json.dump(log_info, f, indent=4)
-            del log_info
+            params_info = {key: getattr(self, key) for key in params_keys}
+            with open(os.path.join(self.recording_path, 'params.json'), 'w') as f:
+                json.dump(params_info, f, indent=4)
+            del params_info
 
             # create timestamps csv file
-            self.timestamps_path = os.path.join(self.recording_path, 'timestamps.csv')
-            with open(self.timestamps_path, 'a', newline='') as csv_file:
+            self.timestamps_csv_path = os.path.join(self.recording_path, 'timestamps.csv')
+            with open(self.timestamps_csv_path, 'a', newline='') as csv_file:
                 writer = csv.writer(csv_file)
                 writer.writerow(['Frame', 'Timestamp'])
+            
+            if self.use_tracking:
+                self.tracking_csv_path = os.path.join(self.recording_path, 'tracking.csv')
+                with open(self.tracking_csv_path, 'a', newline='') as csv_file:
+                    writer = csv.writer(csv_file)
+                    writer.writerow(['Frame', 'X', 'Y'])
 
             # turn on ttl
             if self.enable_ttl:
@@ -254,9 +372,29 @@ class RealSenseCamera(QThread):
             print('Recording stopped.')
         
         # re-scale timestamps
-        timestamps = pd.read_csv(self.timestamps_path)
-        timestamps['TimestampFromStart'] = timestamps['Timestamp'] - timestamps['Timestamp'][0]
-        timestamps.to_csv(self.timestamps_path, index=False)
+        if self.timestamps_csv_path:
+            if os.path.exists(self.timestamps_csv_path):
+                try:
+                    timestamps_df = pd.read_csv(self.timestamps_csv_path)
+                    if len(timestamps_df) > 0:
+                        timestamps_df['TimestampFromStart'] = timestamps_df['Timestamp'] - timestamps_df['Timestamp'][0]
+                        timestamps_df.to_csv(self.timestamps_csv_path, index=False)
+                except Exception as e:
+                    print(f"Error processing timestamps: {e}")
+
+        # compute distance traveled
+        if self.use_tracking and self.tracking_csv_path:
+            if os.path.exists(self.tracking_csv_path):
+                try:
+                    tracking_df = pd.read_csv(self.tracking_csv_path)
+                    if len(timestamps_df) > 0:
+                        xy = tracking_df[['X','Y']].values
+                        xy_diffs = xy[1:] - xy[:-1]
+                        distances = np.nan_to_num(np.linalg.norm(xy_diffs, axis=1))
+                        tracking_df['Distance_px'] = np.append(0, distances)
+                        tracking_df.to_csv(self.tracking_csv_path, index=False)
+                except Exception as e:
+                    print(f"Error processing tracking data: {e}")
 
     def stop_camera(self):
         '''
@@ -272,6 +410,7 @@ class RealSenseCamera(QThread):
 class RealSenseGUI(QMainWindow):
     def __init__(
             self,
+            use_tracking=False,
             recording_length=None,
             **camera_kwargs
             ):
@@ -283,14 +422,19 @@ class RealSenseGUI(QMainWindow):
 
         Parameters
         ==========
+        use_tracking : bool
+            Whether or not to use real-time tracking. Default is False.
         recording_length : int
             Time in seconds to make the recording. If 0 or negative or None, will be converted to np.inf and
             the recording will run until the recording is manually stopped. Default is None.
-        ### See the RealSenseCamera class for the rest of the parameters; they are mostly fed directly there ###
+        ### See the RealSenseCamera class for the camera_kwargs parameters ###
         '''
         super().__init__()
         self.setWindowTitle("RealSense IR Recorder")
-        self.setFixedSize(700, 600)
+
+        self.use_tracking = use_tracking # whether or not to use real-time tracking
+        window_width = 1300 if use_tracking else 700
+        self.setFixedSize(window_width, 600)
 
         # set variables
         self.recording_length = np.inf if (recording_length<=0)|(recording_length is None) else recording_length
@@ -313,18 +457,38 @@ class RealSenseGUI(QMainWindow):
         self.stats_layout.addWidget(self.count_label)
         self.layout.addLayout(self.stats_layout)
 
+        self.video_container = QHBoxLayout()
+
         # display video label
         self.video_label = QLabel("Camera Feed")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet(
             "background-color: black; border: 2px solid gray;"
             )
-        self.layout.addWidget(self.video_label)
+        self.video_container.addWidget(self.video_label)
+
+        # display tracking feed if using
+        if self.use_tracking:
+            self.tracking_label = QLabel("Real-time Tracking")
+            self.tracking_label.setAlignment(Qt.AlignCenter)
+            self.tracking_label.setStyleSheet(
+                "background-color: black; border: 2px solid red;"
+            )
+            self.video_container.addWidget(self.tracking_label)
+        
+        self.layout.addLayout(self.video_container)
 
         # create and connect buttons
         self.btn_layout = QHBoxLayout()
+
+        if self.use_tracking:
+            self.reference_btn = QPushButton("Compute Reference")
+            self.reference_btn.clicked.connect(self.on_reference_clicked)
+            self.btn_layout.addWidget(self.reference_btn)
+        
         self.record_btn = QPushButton("Record")
         self.stop_btn = QPushButton("Stop Recording")
+        self.record_btn.setEnabled(not self.use_tracking) # initially disable Record if using tracking
         self.stop_btn.setEnabled(False)
         
         self.btn_layout.addWidget(self.record_btn)
@@ -351,12 +515,16 @@ class RealSenseGUI(QMainWindow):
 
         # start camera thread
         self.camera = RealSenseCamera(
+            use_tracking=self.use_tracking,
             recording_length=self.recording_length,
             **camera_kwargs
             )
         self.camera.image_data.connect(self.update_image)
         self.camera.stats_data.connect(self.update_stats)
         self.camera.elapsed_time.connect(self.check_recording_length)
+        if self.use_tracking:
+            self.camera.tracking_data.connect(self.update_tracking_display)
+            self.camera.reference_ready.connect(self.save_reference)
         self.camera.start()
 
     @Slot(np.ndarray)
@@ -376,6 +544,26 @@ class RealSenseGUI(QMainWindow):
         '''
         self.count_label.setText(f"Frames: {count}")
         self.time_label.setText(f"Duration: {elapsed_time}")
+    
+    @Slot(np.ndarray, tuple)
+    def update_tracking_display(self, diff, com):
+        '''
+        Given subject tracking data, update its display for the current frame.
+        '''
+        
+        diff = (diff - diff.min()) / (diff.max() - diff.min()) * 255 # bring to positive values [0,255]
+        diff_color = cv2.cvtColor(diff.astype('uint8'), cv2.COLOR_GRAY2BGR)
+
+        # draw COM
+        if com and not np.isnan(com[0]):
+            y, x = int(com[0]), int(com[1])
+            cv2.drawMarker(diff_color, (x,y), (0,0,255), cv2.MARKER_CROSS, 20, 2)
+        
+        # draw diff
+        h, w, ch = diff_color.shape
+        q_img = QImage(diff_color.data, w, h, w*ch, QImage.Format_BGR888)
+        self.tracking_label.setPixmap(QPixmap.fromImage(q_img))
+
 
     def toggle_light_blink(self):
         '''
@@ -391,6 +579,30 @@ class RealSenseGUI(QMainWindow):
                 "background-color: #ff0000; border-radius: 10px; border: 1px solid #a00;"
                 )
         self.blink_state = not self.blink_state
+    
+    @Slot(bool)
+    def save_reference(self, reference_ready):
+        '''
+        When the reference image is ready, save it.
+        '''
+        self.reference_btn.setText("Reference Set")
+        self.reference_btn.setEnabled(True)
+        self.record_btn.setEnabled(True)
+
+        if reference_ready and self.camera.reference is not None:
+            cv2.imwrite(
+                os.path.join(self.camera.folder_path, 'reference.png'),
+                self.camera.reference
+                )
+
+    def on_reference_clicked(self):
+        '''
+        When clicked, compute reference and save it
+        as a png to recording folder.
+        '''
+        self.reference_btn.setText("Computing...")
+        self.reference_btn.setEnabled(False)
+        self.camera.compute_reference()
 
     def on_record_clicked(self):
         '''
@@ -408,7 +620,7 @@ class RealSenseGUI(QMainWindow):
 
         self.camera.start_recording()
     
-    def end_recording(self):
+    def on_stop_clicked(self):
         '''
         Disable stop recording button, stop timer,
         stop blinking light, and stop recording.
@@ -430,19 +642,13 @@ class RealSenseGUI(QMainWindow):
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec()
 
-    def on_stop_clicked(self):
-        '''
-        End recording when clicked.
-        '''
-        self.end_recording()
-
     @Slot(float)
     def check_recording_length(self, elapsed):
         '''
         When recording length has completed (if provided), end recording.
         '''
         if elapsed >= self.recording_length:
-            self.end_recording()
+            self.on_stop_clicked()
 
     def closeEvent(self, event):
         '''
