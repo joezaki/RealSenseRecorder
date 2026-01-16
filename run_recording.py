@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QApplication
 from gui import RealSenseGUI
 
 recording_params = {
-    'serial_number'   : '213622072819', # leave as None to load the first available one
+    'serial_number'   : '213622074070', # leave as None to load the first available one
     'folder_path'     : './data/',
     'recording_length': 10, # in seconds, leave 0 if you want recording indefinitely
     'frames_per_file' : 1000,
@@ -15,6 +15,7 @@ recording_params = {
     'gain'        : 50,
     'laser_power' : 200,
     'enable_ttl'  : True,
+    'use_tracking': False
 }
 
 ## Run GUI ##
