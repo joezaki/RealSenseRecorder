@@ -4,6 +4,9 @@ This repository defines a `RealSenseCamera` class which engages a RealSense came
 frames and send output TTL signals on every frame. It also defines a `RealSenseGUI` class which <br>
 creates a GUI written using `PySide6` to stream the video and to click record/stop recording. This system <br>
 incorporates optional real-time tracking of the subject, using code adapted from [ezTrack](https://github.com/denisecailab/ezTrack).
+
+***Important Note: If using a RealSense camera for the first time, connect the camera to the computer via USB-C and open the [RealSense Viewer GUI](https://github.com/realsenseai/librealsense/tree/master/tools/realsense-viewer). Update the camera's firmare and critically, enable metadata. Metadata has to be explicitly enabled, and not enabling it will prevent hardware timestamps from being recorded, which will make data synchronization across data streams difficult.***
+
 ***
 ### *To use the GUI:*
 1. Navigate to this folder after cloning this repo: `cd /path/to/folder/RealSense_Recorder`.
